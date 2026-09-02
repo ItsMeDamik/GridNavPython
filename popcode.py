@@ -47,6 +47,9 @@ class PopCode2D:
         total = pattern.sum()
         if total <= 1e-8:
             return (float("nan"), float("nan"))
+        # weighted average: for every single unit, multiply its activation by its 
+        # own row-address — then add all those products together — then divide 
+        # by total activation
         row_est = (pattern * self.unit_row).sum() / total
         col_est = (pattern * self.unit_col).sum() / total
         return (row_est, col_est)
@@ -69,6 +72,8 @@ if __name__ == "__main__":
 
     pos = Pos(row=1, col=1)
     pattern = pc.encode(pos)
+    print(pc.unit_row)
+    print(pc.unit_col)
 
     print(f"Encoding position {pos}: \n")
     print(ascii_heatmap(pattern))
