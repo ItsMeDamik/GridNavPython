@@ -31,12 +31,21 @@ def vm_equilibrium(ge: np.ndarray, gi, gl: float = G_L) -> np.ndarray:
     return (ge * E_E + gl * E_L + gi * E_I) / (ge + gl + gi)
 
 
-def activation(vm: np.ndarray, theta: float = THETA, gain: float = GAIN) -> np.ndarray:
+def ge_thr(gi, gl: float = G_L, theta: float = THETA) -> np.ndarray:
     """
-    Saturating threshold function ('noisy x-over-x-plus-1' style):
-    zero beow threshold, rises and saturates toward 1 above it.
+    The ge value that would put a unit exactly at threshold, given the (already-known)
+    gi and gl. 
+    Activation is driven by (ge - geThr).
     """
-    x = gain * np.maximum(vm - theta, 0.0)
+    return (gi * (E_I - theta) + gl * (E_L - theta)) / (theta - E_E)
+
+
+def activation(ge: np.ndarray, gi, gl: float = G_L, theta: float = THETA, gain: float = GAIN) -> np.ndarray:
+    """
+    Saturating threshold function ('noisy x-over-x-plus-1' style)
+    """
+    thr = ge_thr(gi, gl, theta)
+    x = gain * np.maximum(ge - thr, 0.0)
     return x / (x + 1.0)
 
 
@@ -51,7 +60,7 @@ def inhib_needed_for_threshold(ge: np.ndarray, gl: float = G_L, theta: float = T
 
 def kwta(ge: np.ndarray, k: int) -> float:
     """
-    Pick one gloabl inhibitory conductance for the whole layer such that 
+    Pick one global inhibitory conductance for the whole layer such that 
     (approximately) the top-k units by ge end up above threshold. 
     """
     gi_needed = inhib_needed_for_threshold(ge)
@@ -68,8 +77,7 @@ def layer_activation(ge: np.ndarray, k: int) -> np.ndarray:
     Full pipeline: excitatory input in, sparse activation pattern out.
     """
     gi = kwta(ge, k)
-    vm = vm_equilibrium(ge, gi)
-    return activation(vm)
+    return activation(ge, gi)
 
 
 if __name__ == "__main__":
