@@ -92,4 +92,3 @@ if __name__ == "__main__":
             marker = " <- active" if a > 0.01 else ""
             print(f" unit {i}: ge={g:.2f} act={a:.3f}{marker}")
         print(f" number of active units: {(act > 0.01).sum()}\n")
-

@@ -1,6 +1,6 @@
 """
 FFFB version: feedforward + feedback inhibition.
-Replaces the sort-based kWTA with leabra's actual current mechanism: a single
+Replaces the sort-based kWTA with leabra's current mechanism: a single
 layer-wide inhibitiory conductance (gi) built frpm two components --
 
     FF (feedforward): proportional to how much excitatory drive is arriving into
@@ -14,7 +14,7 @@ computed in one shot.
 """
 
 import numpy as np
-from neuron import E_E, E_L, E_I, G_L, THETA, GAIN, vm_equilibrium, activation
+from neuron import vm_equilibrium, activation
 
 
 def fffb_settle(
@@ -47,8 +47,8 @@ def fffb_settle(
         avg_act = act.mean()
         fbi = fbi + fb_dt * (fb * avg_act - fbi) # leaky integrator toward fb*avg_act
         gi = gi_gain * (ffi + fbi)
-        vm = vm_equilibrium(ge, gi)
-        act = activation(vm)
+        gi = gi_gain * (ffi + fbi)
+        act = activation(ge, gi)
         history.append((gi, act.copy()))
 
     return gi, act, history
