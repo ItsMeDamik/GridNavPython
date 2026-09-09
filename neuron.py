@@ -17,7 +17,7 @@ import numpy as np
 E_E = 1.0   # excitatory reversal potential -- conductance here pulls UP
 E_L = 0.3   # leak reversal potential -- resting baseline
 E_I = 0.25  # inhibitory reversal potential -- pulls DOWN, below rest
-G_L = 0.1   # leak conductance -- constant "pull toward rest" strength
+G_L = 0.2   # leak conductance -- constant "pull toward rest" strength
 THETA = 0.5 # firing threshold, on the Vm scale
 GAIN = 100  # activation function gain (how sharply it saturates)
 

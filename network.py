@@ -10,6 +10,11 @@ Network    = owns a set of layers and projections, and runs one forward pass: co
              activation via FFFB.
 
 Mirrors gridnav's ConfigNet, just with fewer layers: Input (position) + Action -> Hidden.
+
+Given: ge, gi, gl - how strongly each of the 3 forces is currently pulling on Vm.
+Given: E_e, E_l, E_i - where each force is trying to pull toward (reversal potential).
+Computed: Vm or geThr.
+Computed: act - the unit's final output: 0 if below threshold, a graded 0-1 if above.
 """
 
 import numpy as np
@@ -48,7 +53,7 @@ class Projection:
         self.wt_scale = wt_scale
         rng = np.random.default_rng(seed)
         # One weight per (recv_unit, send_unit) pair -- full connectivity.
-        # Random uniform [0, 1], mimicking leabra's normalized weight range.
+        # Random uniform [0, 1].
         self.weights = rng.uniform(0.0, 1.0, size=(recv_layer.size, send_layer.size))
 
     def contribute_ge(self) -> np.ndarray:
@@ -57,8 +62,8 @@ class Projection:
         as an average over the sending layer's units
         """
         send_act_flat = self.send_layer.act.flatten()
-        net = self.wts @ send_act_flat / self.send_layer.size
-        return self.wt_scale * net.reshape(self.recv.shape)
+        net = self.weights @ send_act_flat / self.send_layer.size # weights @ send_act
+        return self.wt_scale * net.reshape(self.recv_layer.shape)
 
     
 
@@ -84,4 +89,49 @@ class Network:
         """
         # First, reset ge for layers we're about to compute (non clamped ones)
         incoming = {name: [] for name in self.layers if not self.layers[name].clamped}
+
+        for proj in self.projections:
+            if proj.recv_layer.name in incoming:
+                incoming[proj.recv_layer.name].append(proj)
+
+        for name, projs in incoming.items():
+            layer = self.layers[name]
+            if not projs:
+                continue
+            ge_total = sum(p.contribute_ge() for p in projs)
+            layer.ge = ge_total
+            _, act, _ = fffb_settle(ge_total.flatten())
+            layer.act = act.reshape(layer.shape)
+
+
+if __name__ == "__main__":
+    from popcode import PopCode2D
+    from world import Pos
+
+    net = Network()
+    net.add_layer("Input", shape=(7, 7))  # position, population-coded
+    net.add_layer("Action", shape=(4,))   # one-hot: N/E/S/W
+    net.add_layer("Hidden", shape=(5,5)) 
+
+    net.connect("Input", "Hidden", wt_scale=4.0, seed=1)
+    net.connect("Action", "Hidden", wt_scale=1.0, seed=2)
+
+    # Clamp Input with a real population-coded position
+    pc = PopCode2D(rows = 7, cols = 7, sigma = 1.0)
+    net.layers["Input"].clamp(pc.encode(Pos(row=3, col=4)))
+
+    # Clamp Action as one-hot: index 1 = East
+    action_pattern = np.zeros(4)
+    action_pattern[1] = 1.0
+    net.layers["Action"].clamp(action_pattern)
+
+    net.cycle()
+
+    hidden = net.layers["Hidden"]
+    print("Hidden layer ge (net input):")
+    print(np.round(hidden.ge, 2))
+    print("\nHidden layer act (after FFFB settling):")
+    print(np.round(hidden.act, 2))
+    print(f"\nActive Hidden units: {(hidden.act > 0.01).sum()} / {hidden.size}")
+
         
