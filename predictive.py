@@ -11,9 +11,10 @@ Minus phase: current position + chosen action are clamped in.
 Hidden computes from those (Input+Action -> Hidden).
 Then Hidden -> InputP generates a Prediction of the next position 
 -- with no knowledge yet of what actually happens.
+Hidden and InputP are allowed to recirculate for several cycles to settle the prediction.
 
 Plus phase: the action is actually taken in the world, producing the 
-real next position. That becomes ground truth.
+real next position. That becomes ground truth. InputP is clamped to that, and Hidden recomputes from Input+Action+InputP.
 
 """
 
@@ -36,14 +37,17 @@ def build_predictive_network(grid_shape: tuple[int, int], hidden_shape=(5, 5), \
 
     net.connect("Input", "Hidden", wt_scale=4.0, seed=seed + 1)
     net.connect("Action", "Hidden", wt_scale=1.0, seed=seed + 2)
-    net.connect("Hidden", "InputP", wt_scale=4.0, seed=seed + 3)
+    net.connect("Hidden", "InputP", wt_scale=4.0, seed=seed + 3) # forward: predict next position
+    net.connect("InputP", "Hidden", wt_scale=1.0, seed=seed + 4) # backward: recirculate the outcome
+
     return net
 
 
-def run_trial(net: Network, env: Env, action: Action, pc: PopCode2D):
+def run_trial(net: Network, env: Env, action: Action, pc: PopCode2D, lrate: float = 0.02, n_outer: int = 5):
     """
     Run one minus/plus trial. Returns (predicted, actial, squared_error, moved).
     """
+    Input, Actn, Hidden, InputP = net.layers["Input"], net.layers["Action"], net.layers["Hidden"], net.layers["InputP"]
 
     # --- Minus phase ---
     net.layers["Input"].clamp(pc.encode(env.pos))
@@ -51,9 +55,13 @@ def run_trial(net: Network, env: Env, action: Action, pc: PopCode2D):
     action_pattern[int(action)] = 1.0
     net.layers["Action"].clamp(action_pattern)
 
-    net.cycle()     # Input+Action -> Hidden -> InputP, in one pass
+    InputP.act = np.zeros(InputP.shape) # don't leak last trial's plus-phase value into this trial
 
-    predicted = net.layers["InputP"].act.copy()
+    for _ in range(n_outer):  # Hidden <-> InputP recirculation, to settle the prediction
+        net.cycle()     # Input+Action -> Hidden <-> InputP, in one pass
+
+    predicted = net.layers["InputP"].act.copy() # minus-phase guess
+    hidden_minus = Hidden.act.copy() # minus-phase hidden
 
     # --- Plus phase ---
     moved = env.take_action(action)
@@ -61,6 +69,25 @@ def run_trial(net: Network, env: Env, action: Action, pc: PopCode2D):
 
     error = actual - predicted
     sq_error = float((error ** 2).sum())
+
+    InputP.clamp(actual) # plus-phase ground truth. InputP is fixed now -- only Hidden is left to compute
+    net.cycle() # One settle for Hidden; no other free layer to alternate with
+    hidden_plus = Hidden.act.copy() # plus-phase hidden
+
+    # --- Weight update ---
+    for proj in net.projections:
+        if proj.send_layer.name == "Input" and proj.recv_layer.name == "Hidden":
+            proj.learn(Input.act, hidden_minus, Input.act, hidden_plus, lrate)
+        elif proj.send_layer.name == "Action" and proj.recv_layer.name == "Hidden":
+            proj.learn(Actn.act, hidden_minus, Actn.act, hidden_plus, lrate)
+        elif proj.send_layer.name == "Hidden" and proj.recv_layer.name == "InputP":
+            proj.learn(hidden_minus, predicted, hidden_plus, actual, lrate)
+        elif proj.send_layer.name == "InputP" and proj.recv_layer.name == "Hidden":
+            proj.learn(predicted, hidden_minus, actual, hidden_plus, lrate) # think about it
+        else:
+            raise ValueError(f"Unexpected projection: {proj.send_layer.name} -> {proj.recv_layer.name}")
+
+    InputP.unclamp()
 
     return predicted, actual, sq_error, moved
 
@@ -76,7 +103,7 @@ if __name__ == "__main__":
 
     print(f"World: {env.world.rows} x {env.world.cols}, starting at {env.pos}\n")
 
-    for step in range(6):
+    for step in range(30):
         action = choose_action(env)
         predicted, actual, sq_err, moved = run_trial(net, env, action, pc)
         print(f"step {step}: action={action.name:6s} moved={moved!s:5} "

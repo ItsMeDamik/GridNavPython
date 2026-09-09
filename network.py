@@ -40,6 +40,12 @@ class Layer:
         self.act = pattern.copy()
         self.clamped = True
 
+    def unclamp(self):
+        """
+        Release this layer back to being computed, not forced."
+        """
+        self.clamped = False
+
     def __repr__(self):
         return f"Layer({self.name}, shape={self.shape}, clamped={self.clamped})"
 
@@ -64,6 +70,16 @@ class Projection:
         send_act_flat = self.send_layer.act.flatten()
         net = self.weights @ send_act_flat / self.send_layer.size # weights @ send_act
         return self.wt_scale * net.reshape(self.recv_layer.shape)
+
+    def learn(self, send_act_minus: np.ndarray, recv_act_minus: np.ndarray, send_act_plus: np.ndarray, \
+              recv_act_plus: np.ndarray, lrate: float = 0.02):
+        """
+        Apply one CHL weight update from explicit minus/plus phase snapshots of both sender and receiver.
+        """
+        from learn import chl_dwt
+        dwt = chl_dwt(send_act_minus, recv_act_minus, send_act_plus, recv_act_plus, lrate)
+        self.weights += dwt
+        np.clip(self.weights, 0.0, 1.0, out=self.weights) # keep weights in [0,1]
 
     
 
