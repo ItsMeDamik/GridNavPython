@@ -63,13 +63,13 @@ class Projection:
         # Random uniform [0, 1].
         self.weights = rng.uniform(0.0, 1.0, size=(recv_layer.size, send_layer.size))
 
-    def contribute_ge(self) -> np.ndarray:
+
+    def contribute_ge(self, send_act):
         """
         This projection's contribution to the receiving layer's ge,
         as an average over the sending layer's units
         """
-        send_act_flat = self.send_layer.act.flatten()
-        net = self.weights @ send_act_flat / self.send_layer.size # weights @ send_act
+        net = self.weights @ send_act.flatten() / self.send_layer.size
         return self.wt_scale * net.reshape(self.recv_layer.shape)
 
     def learn(self, send_act_minus: np.ndarray, recv_act_minus: np.ndarray, send_act_plus: np.ndarray, \
@@ -101,24 +101,21 @@ class Network:
 
     def cycle(self):
         """
-        One forward pass: every non-clamped layer collects ge from its incoming,
-        then settles its activation via FFFB.
-        """
-        # First, reset ge for layers we're about to compute (non clamped ones)
-        incoming = {name: [] for name in self.layers if not self.layers[name].clamped}
-
-        for proj in self.projections:
-            if proj.recv_layer.name in incoming:
-                incoming[proj.recv_layer.name].append(proj)
-
-        for name, projs in incoming.items():
-            layer = self.layers[name]
-            if not projs:
+        ONE raw cycle: every non-clamped layer computes from a FROZEN
+        snapshot of every layer's PREVIOUS state, then all update together.
+        Call this repeatedly (e.g. 100x) to run a full trial."""
+        from fffb import fffb_step
+        snapshot = {name: l.act.copy() for name, l in self.layers.items()}
+        for name, l in self.layers.items():
+            if l.clamped:
                 continue
-            ge_total = sum(p.contribute_ge() for p in projs)
-            layer.ge = ge_total
-            _, act, _ = fffb_settle(ge_total.flatten())
-            layer.act = act.reshape(layer.shape)
+            incoming = [p for p in self.projections if p.recv_layer.name == name]
+            if not incoming:
+                continue
+            ge = sum(p.contribute_ge(snapshot[p.send_layer.name]) for p in incoming)
+            act, gi, l.fbi = fffb_step(ge.flatten(), l.fbi, snapshot[name].flatten(), gi_gain=1.8)
+            l.act = act.reshape(l.shape)
+            l.ge = ge
 
 
 if __name__ == "__main__":

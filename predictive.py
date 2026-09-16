@@ -60,28 +60,14 @@ def run_trial(net: Network, env: Env, action: Action, pc: PopCode2D, lrate: floa
         next_pos = env.pos
     actual_pattern = pc.encode(next_pos)
 
-    predicted = None
-    hidden_minus = None
+    predicted, hidden_minus = None, None
 
     for cyc in range(100):
         if cyc == 75:                          # minus phase ends, plus phase begins
             predicted = InputP.act.copy()       # capture the free-running guess HERE
             hidden_minus = Hidden.act.copy()
             InputP.clamp(actual_pattern)         # mid-loop clamp, cycling continues uninterrupted
-
-        # true synchronous step: freeze a snapshot, update every free layer from it together
-        snapshot = {name: l.act.copy() for name, l in net.layers.items()}
-        for name, l in net.layers.items():
-            if l.clamped:
-                continue
-            incoming = [p for p in net.projections if p.recv_layer.name == name]
-            if not incoming:
-                continue   # nothing feeds this layer yet -- leave it at its current value
-            ge = sum(p.wt_scale * (p.weights @ snapshot[p.send_layer.name].flatten() / p.send_layer.size) \
-                        for p in incoming).reshape(l.shape)
-            act, gi, l.fbi = fffb_step(ge.flatten(), l.fbi, snapshot[name].flatten(), gi_gain=1.8)
-            l.act = act.reshape(l.shape)
-            l.ge = ge
+        net.cycle()
 
     hidden_plus = Hidden.act.copy()
 
