@@ -47,12 +47,26 @@ def fffb_settle(
         avg_act = act.mean()
         fbi = fbi + fb_dt * (fb * avg_act - fbi) # leaky integrator toward fb*avg_act
         gi = gi_gain * (ffi + fbi)
-        gi = gi_gain * (ffi + fbi)
         act = activation(ge, gi)
         history.append((gi, act.copy()))
 
     return gi, act, history
 
+def fffb_step(ge: np.ndarray, fbi_prev: float, prev_act: np.ndarray,
+              gi_gain: float = 1.8, ff: float = 1.0, fb: float = 1.0,
+              ff0: float = 0.1, fb_tau: float = 1.4, max_vs_avg: float = 0.0):
+    """ONE raw cycle's worth of FFFB. fbi_prev/prev_act must be supplied
+    externally and persisted by the caller across many calls -- this
+    function holds no state of its own."""
+    avg_ge, max_ge = ge.mean(), ge.max()
+    ff_netin = avg_ge + max_vs_avg * (max_ge - avg_ge)
+    ffi = ff * max(ff_netin - ff0, 0.0)
+    avg_act = prev_act.mean() if prev_act is not None else 0.0
+    fb_dt = 1.0 / fb_tau
+    fbi_new = fbi_prev + fb_dt * (fb * avg_act - fbi_prev)
+    gi = gi_gain * (ffi + fbi_new)
+    act = activation(ge, gi)
+    return act, gi, fbi_new
 
 if __name__ == "__main__":
     ge = np.array([0.9, 0.3, 0.7, 0.1, 0.85, 0.2, 0.5, 0.05, 0.6, 0.4])

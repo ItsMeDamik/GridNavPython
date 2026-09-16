@@ -22,6 +22,7 @@ import numpy as np
 from network import Network
 from popcode import PopCode2D
 from world import Env, Action
+from fffb import fffb_step
 
 
 def build_predictive_network(grid_shape: tuple[int, int], hidden_shape=(5, 5), \
@@ -30,13 +31,10 @@ def build_predictive_network(grid_shape: tuple[int, int], hidden_shape=(5, 5), \
     net.add_layer("Input", shape=grid_shape)
     net.add_layer("Action", shape=(4,))
     net.add_layer("Hidden", shape=hidden_shape)
-    # Note: InputP must be added after Hidden - Network.cycle() processes 
-    # non-clamped layers in insertion order, and InputP's prediction depends on
-    # Hidden already being computed this same cycle.
     net.add_layer("InputP", shape=grid_shape)
 
-    net.connect("Input", "Hidden", wt_scale=4.0, seed=seed + 1)
-    net.connect("Action", "Hidden", wt_scale=1.0, seed=seed + 2)
+    net.connect("Input", "Hidden", wt_scale=15.0, seed=seed + 1)
+    net.connect("Action", "Hidden", wt_scale=4.0, seed=seed + 2)
     net.connect("Hidden", "InputP", wt_scale=4.0, seed=seed + 3) # forward: predict next position
     net.connect("InputP", "Hidden", wt_scale=1.0, seed=seed + 4) # backward: recirculate the outcome
 
@@ -47,43 +45,61 @@ def run_trial(net: Network, env: Env, action: Action, pc: PopCode2D, lrate: floa
     """
     Run one minus/plus trial. Returns (predicted, actial, squared_error, moved).
     """
-    Input, Actn, Hidden, InputP = net.layers["Input"], net.layers["Action"], net.layers["Hidden"], net.layers["InputP"]
+    Input, Action, Hidden, InputP = net.layers["Input"], net.layers["Action"], net.layers["Hidden"], net.layers["InputP"]
 
-    # --- Minus phase ---
-    net.layers["Input"].clamp(pc.encode(env.pos))
-    action_pattern = np.zeros(4)
-    action_pattern[int(action)] = 1.0
-    net.layers["Action"].clamp(action_pattern)
+    for l in (Hidden, InputP):
+        l.fbi = 0.0
+        l.act = np.zeros(l.shape)
+        l.clamped = False
 
-    InputP.act = np.zeros(InputP.shape) # don't leak last trial's plus-phase value into this trial
+    # compute the real outcome NOW (env is deterministic) -- needed for the
+    # plus-phase clamp, but don't execute the move until after settling
+    from world import move
+    next_pos = move(env.pos, action)
+    if not env.world.is_open(next_pos):
+        next_pos = env.pos
+    actual_pattern = pc.encode(next_pos)
 
-    for _ in range(n_outer):  # Hidden <-> InputP recirculation, to settle the prediction
-        net.cycle()     # Input+Action -> Hidden <-> InputP, in one pass
+    predicted = None
+    hidden_minus = None
 
-    predicted = net.layers["InputP"].act.copy() # minus-phase guess
-    hidden_minus = Hidden.act.copy() # minus-phase hidden
+    for cyc in range(100):
+        if cyc == 75:                          # minus phase ends, plus phase begins
+            predicted = InputP.act.copy()       # capture the free-running guess HERE
+            hidden_minus = Hidden.act.copy()
+            InputP.clamp(actual_pattern)         # mid-loop clamp, cycling continues uninterrupted
 
-    # --- Plus phase ---
+        # true synchronous step: freeze a snapshot, update every free layer from it together
+        snapshot = {name: l.act.copy() for name, l in net.layers.items()}
+        for name, l in net.layers.items():
+            if l.clamped:
+                continue
+            incoming = [p for p in net.projections if p.recv_layer.name == name]
+            if not incoming:
+                continue   # nothing feeds this layer yet -- leave it at its current value
+            ge = sum(p.wt_scale * (p.weights @ snapshot[p.send_layer.name].flatten() / p.send_layer.size) \
+                        for p in incoming).reshape(l.shape)
+            act, gi, l.fbi = fffb_step(ge.flatten(), l.fbi, snapshot[name].flatten(), gi_gain=1.8)
+            l.act = act.reshape(l.shape)
+            l.ge = ge
+
+    hidden_plus = Hidden.act.copy()
+
     moved = env.take_action(action)
-    actual = pc.encode(env.pos)
+    actual = pc.encode(env.pos)                # should equal actual_pattern exactly
+    sq_error = float(((actual - predicted) ** 2).sum())
 
-    error = actual - predicted
-    sq_error = float((error ** 2).sum())
-
-    InputP.clamp(actual) # plus-phase ground truth. InputP is fixed now -- only Hidden is left to compute
-    net.cycle() # One settle for Hidden; no other free layer to alternate with
-    hidden_plus = Hidden.act.copy() # plus-phase hidden
 
     # --- Weight update ---
     for proj in net.projections:
         if proj.send_layer.name == "Input" and proj.recv_layer.name == "Hidden":
             proj.learn(Input.act, hidden_minus, Input.act, hidden_plus, lrate)
         elif proj.send_layer.name == "Action" and proj.recv_layer.name == "Hidden":
-            proj.learn(Actn.act, hidden_minus, Actn.act, hidden_plus, lrate)
+            proj.learn(Action.act, hidden_minus, Action.act, hidden_plus, lrate)
         elif proj.send_layer.name == "Hidden" and proj.recv_layer.name == "InputP":
             proj.learn(hidden_minus, predicted, hidden_plus, actual, lrate)
         elif proj.send_layer.name == "InputP" and proj.recv_layer.name == "Hidden":
-            proj.learn(predicted, hidden_minus, actual, hidden_plus, lrate) # think about it
+            proj.learn(predicted, hidden_minus, actual, hidden_plus, lrate)
         else:
             raise ValueError(f"Unexpected projection: {proj.send_layer.name} -> {proj.recv_layer.name}")
 
@@ -103,7 +119,7 @@ if __name__ == "__main__":
 
     print(f"World: {env.world.rows} x {env.world.cols}, starting at {env.pos}\n")
 
-    for step in range(30):
+    for step in range(5):
         action = choose_action(env)
         predicted, actual, sq_err, moved = run_trial(net, env, action, pc)
         print(f"step {step}: action={action.name:6s} moved={moved!s:5} "

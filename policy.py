@@ -43,4 +43,4 @@ if __name__ == "__main__":
         print(f"step {step:2d}: action={action.name:6s} -> {env.pos} \
               {'' if moved else '(blocked!)'}")
 
-        print(f"\nWall bumps out of 20 steps: {wall_bumps}")
+    print(f"\nWall bumps out of 20 steps: {wall_bumps}")

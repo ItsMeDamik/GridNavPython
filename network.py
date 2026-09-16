@@ -30,6 +30,7 @@ class Layer:
         self.act = np.zeros(shape)  # current activation pattern
         self.ge = np.zeros(shape)  # current net input (excitatory drive)
         self.clamped = False
+        self.fbi = 0.0 # persists across cycles
 
     def clamp(self, pattern: np.ndarray):
         """
@@ -129,8 +130,8 @@ if __name__ == "__main__":
     net.add_layer("Action", shape=(4,))   # one-hot: N/E/S/W
     net.add_layer("Hidden", shape=(5,5)) 
 
-    net.connect("Input", "Hidden", wt_scale=4.0, seed=1)
-    net.connect("Action", "Hidden", wt_scale=1.0, seed=2)
+    net.connect("Input", "Hidden", wt_scale=15.0, seed=1)
+    net.connect("Action", "Hidden", wt_scale=4.0, seed=2)
 
     # Clamp Input with a real population-coded position
     pc = PopCode2D(rows = 7, cols = 7, sigma = 1.0)
