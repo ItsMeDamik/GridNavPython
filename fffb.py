@@ -12,79 +12,40 @@ Because FB depends on activation, and activation depends on gi (which depends on
 FB) -- this is circular, and has to be *settled* over several cycles rather than
 computed in one shot.
 """
-
 import numpy as np
-from neuron import vm_equilibrium, activation
+from neuron import activation
 
 
-def fffb_settle(
-        ge: np.ndarray,
-        gi_gain: float = 1.8,
-        ff: float = 1.0,
-        fb: float = 1.0,
-        ff0: float = 0.1,
-        fb_tau: float = 1.4,
-        max_vs_avg: float = 0.0,
-        n_cycles: int = 30,
-):
-    """
-    Run the FFFB feedback loop to a settled (approximate) 
-    equilibrium. Returns (final_gi, final_act, history) where 
-    history is a list of (gi, act) pairs, one per cycle,
-    so you can watch it converge.
-    """
-    fb_dt = 1.0 / fb_tau
-    fbi = 0.0
-    act = np.zeros_like(ge) # start fully silent, nothing has fired yet
-    history = []
-
-    avg_ge = ge.mean()
-    max_ge = ge.max()
-    ff_netin = avg_ge + max_vs_avg * (max_ge - avg_ge)
-    ffi = ff * max(ff_netin - ff0, 0.0) # FF only depends on ge -- constant across cycles
-
-    for _ in range(n_cycles):
-        avg_act = act.mean()
-        fbi = fbi + fb_dt * (fb * avg_act - fbi) # leaky integrator toward fb*avg_act
-        gi = gi_gain * (ffi + fbi)
-        act = activation(ge, gi)
-        history.append((gi, act.copy()))
-
-    return gi, act, history
-
-def fffb_step(ge: np.ndarray, fbi_prev: float, prev_act: np.ndarray,
+def fffb_cycle(ge: np.ndarray, fbi_prev: float, prev_act: np.ndarray,
               gi_gain: float = 1.8, ff: float = 1.0, fb: float = 1.0,
-              ff0: float = 0.1, fb_tau: float = 1.4, max_vs_avg: float = 0.0):
-    """ONE raw cycle's worth of FFFB. fbi_prev/prev_act must be supplied
-    externally and persisted by the caller across many calls -- this
-    function holds no state of its own."""
-    avg_ge, max_ge = ge.mean(), ge.max()
-    ff_netin = avg_ge + max_vs_avg * (max_ge - avg_ge)
-    ffi = ff * max(ff_netin - ff0, 0.0)
+              ff0: float = 0.1, fb_tau: float = 8.0):
+    """One settling cycle's worth of feedforward+feedback inhibition."""
+    avg_ge = ge.mean()
+    ffi = ff * max(avg_ge - ff0, 0.0)
     avg_act = prev_act.mean() if prev_act is not None else 0.0
-    fb_dt = 1.0 / fb_tau
-    fbi_new = fbi_prev + fb_dt * (fb * avg_act - fbi_prev)
+    fbi_new = fbi_prev + (1.0 / fb_tau) * (fb * avg_act - fbi_prev)
     gi = gi_gain * (ffi + fbi_new)
-    act = activation(ge, gi)
-    return act, gi, fbi_new
+    return activation(ge, gi), gi, fbi_new
+
 
 if __name__ == "__main__":
     ge = np.array([0.9, 0.3, 0.7, 0.1, 0.85, 0.2, 0.5, 0.05, 0.6, 0.4])
+    fbi_prev = 0.0
+    prev_act = np.zeros_like(ge)
 
-    final_gi, final_act, history = fffb_settle(ge)
-
-    print("Cycle-by-cycle settling (gi, then how many units are active):")
-    for cyc, (gi, act) in enumerate(history):
+    print("Single-cycle stepping with persistent FFB state:")
+    for cyc in range(10):
+        act, gi, fbi_prev = fffb_cycle(ge, fbi_prev, prev_act)
+        prev_act = act
         n_active = (act > 0.01).sum()
-        if cyc < 5 or cyc % 5 == 0 or cyc == len(history) - 1:
-            print(f" cycle {cyc:2d}: gi={gi:.3f} active_units={n_active}")
+        print(f" cycle {cyc:2d}: gi={gi:.3f} fbi={fbi_prev:.3f} active_units={n_active}")
 
     print()
     print("Final activations:")
-    for i, (g, a) in enumerate(zip(ge, final_act)):
+    for i, (g, a) in enumerate(zip(ge, prev_act)):
         marker = " <- active" if a > 0.01 else ""
         print(f" unit {i}: ge={g:.2f} act={a:.3f}{marker}")
-    print(f"\nTotal active units: {(final_act > 0.01).sum()} out of {len(ge)}")
+    print(f"\nTotal active units: {(prev_act > 0.01).sum()} out of {len(ge)}")
 
 """
 the main takeaway is that we have ge and we need to compute gi. 

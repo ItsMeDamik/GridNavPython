@@ -1,7 +1,7 @@
 """
 The learning rule.
 Implements CHL (Contrastive Hebbian Learning). XCAL will be implemented later; it learns from continuous short/medium/long-term
-running averages of activaton sampled across the whole ettling trajectory.
+running averages of activaton sampled across the whole settling trajectory.
 CHL only looks at the two settled endpoints (minus, plus phase), so it is simpler to implement.
 
 dwt[i,j] = lrate * (send_plus[j] * recv_plus[i] - send_minus[j] * recv_minus[i])

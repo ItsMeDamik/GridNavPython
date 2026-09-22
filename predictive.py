@@ -22,10 +22,13 @@ import numpy as np
 from network import Network
 from popcode import PopCode2D
 from world import Env, Action
-from fffb import fffb_step
+from fffb import fffb_cycle
+
+N_QUARTERS = 4
+CYC_PER_QTR = 25
 
 
-def build_predictive_network(grid_shape: tuple[int, int], hidden_shape=(5, 5), \
+def build_predictive_network(grid_shape: tuple[int, int], hidden_shape=(15, 15), \
                              seed: int = 0) -> Network:
     net = Network()
     net.add_layer("Input", shape=grid_shape)
@@ -33,10 +36,10 @@ def build_predictive_network(grid_shape: tuple[int, int], hidden_shape=(5, 5), \
     net.add_layer("Hidden", shape=hidden_shape)
     net.add_layer("InputP", shape=grid_shape)
 
-    net.connect("Input", "Hidden", wt_scale=15.0, seed=seed + 1)
-    net.connect("Action", "Hidden", wt_scale=4.0, seed=seed + 2)
-    net.connect("Hidden", "InputP", wt_scale=4.0, seed=seed + 3) # forward: predict next position
-    net.connect("InputP", "Hidden", wt_scale=1.0, seed=seed + 4) # backward: recirculate the outcome
+    net.connect("Input", "Hidden", wt_scale=10.0, seed=seed + 1)
+    net.connect("Action", "Hidden", wt_scale=1.0, seed=seed + 2)
+    hidden_to_inputp =net.connect("Hidden", "InputP", wt_scale=3.0, seed=seed + 3) # forward: predict next position
+    net.connect("InputP", "Hidden", wt_scale=1.0, tied_to=hidden_to_inputp) # backward: recirculate the outcome
 
     return net
 
@@ -52,6 +55,11 @@ def run_trial(net: Network, env: Env, action: Action, pc: PopCode2D, lrate: floa
         l.act = np.zeros(l.shape)
         l.clamped = False
 
+    Input.clamp(pc.encode(env.pos))
+    action_pattern = np.zeros(4)
+    action_pattern[action.value] = 1.0
+    Action.clamp(action_pattern)
+
     # compute the real outcome NOW (env is deterministic) -- needed for the
     # plus-phase clamp, but don't execute the move until after settling
     from world import move
@@ -62,8 +70,8 @@ def run_trial(net: Network, env: Env, action: Action, pc: PopCode2D, lrate: floa
 
     predicted, hidden_minus = None, None
 
-    for cyc in range(100):
-        if cyc == 75:                          # minus phase ends, plus phase begins
+    for cyc in range(N_QUARTERS * CYC_PER_QTR):
+        if cyc == 3 * CYC_PER_QTR:                          # minus phase ends, plus phase begins
             predicted = InputP.act.copy()       # capture the free-running guess HERE
             hidden_minus = Hidden.act.copy()
             InputP.clamp(actual_pattern)         # mid-loop clamp, cycling continues uninterrupted
@@ -85,7 +93,7 @@ def run_trial(net: Network, env: Env, action: Action, pc: PopCode2D, lrate: floa
         elif proj.send_layer.name == "Hidden" and proj.recv_layer.name == "InputP":
             proj.learn(hidden_minus, predicted, hidden_plus, actual, lrate)
         elif proj.send_layer.name == "InputP" and proj.recv_layer.name == "Hidden":
-            proj.learn(predicted, hidden_minus, actual, hidden_plus, lrate)
+            pass # tied to Hidden->InputP; no independent weights, nothing to learn
         else:
             raise ValueError(f"Unexpected projection: {proj.send_layer.name} -> {proj.recv_layer.name}")
 
@@ -107,6 +115,6 @@ if __name__ == "__main__":
 
     for step in range(5):
         action = choose_action(env)
-        predicted, actual, sq_err, moved = run_trial(net, env, action, pc)
+        predicted, actual, sq_err, moved, hidden_minus, hidden_plus = run_trial(net, env, action, pc)
         print(f"step {step}: action={action.name:6s} moved={moved!s:5} "
               f"pos_after={env.pos} prediction_squared_error={sq_err:.3f}")

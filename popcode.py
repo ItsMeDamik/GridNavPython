@@ -20,14 +20,12 @@ class PopCode2D:
     """
 
     def __init__(self, rows: int, cols: int, sigma: float = 1.0):
-        self.rows = rows
-        self.cols = cols
-        self.sigma = sigma
+        self.rows, self.cols, self.sigma = rows, cols, sigma
         # Precompute each unit's own preferred (row, col) location once --
         # unit (r, c) in the pattern IS the place cell centered at (r, c).
         rr, cc = np.meshgrid(np.arange(rows), np.arange(cols), indexing="ij")
-        self.unit_row = rr # shape (rows, cols)
-        self.unit_col = cc
+        self.unit_row, self.unit_col = rr, cc # shape (rows, cols)
+
 
     def encode(self, pos: Pos) -> np.ndarray:
         """
