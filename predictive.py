@@ -102,6 +102,26 @@ def run_trial(net: Network, env: Env, action: Action, pc: PopCode2D, lrate: floa
     return predicted, actual, sq_error, moved
 
 
+
+def imagine(net: Network, pos_pattern: np.ndarray, action: Action, pc: PopCode2D, n_cycles: int = 75) -> np.ndarray:
+    """Pure imagination: free minus-phase settle, no environment, no
+    learning. Used for lookahead planning -- 'what would happen if...'"""
+    Input, Actn, Hidden, InputP = (net.layers[n] for n in ("Input", "Action", "Hidden", "InputP"))
+    for l in (Hidden, InputP):
+        l.fbi = 0.0
+        l.act = np.zeros(l.shape)
+        l.clamped = False
+    Input.act = pos_pattern
+    Input.clamped = True
+    action_pattern = np.zeros(4)
+    action_pattern[int(action)] = 1.0
+    Actn.act = action_pattern
+    Actn.clamped = True
+    for _ in range(n_cycles):
+        net.cycle()
+    return InputP.act.copy()
+
+
 if __name__ == "__main__":
     import random
     from policy import choose_action
