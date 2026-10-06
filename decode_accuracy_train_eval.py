@@ -43,7 +43,7 @@ if __name__ == '__main__':
     net = build_predictive_network(grid_shape=(env.world.rows, env.world.cols), seed=0)
 
     print('=== learning OFF (evaluation only) ===')
-    evaluate_accuracy(net, env, pc, n_trials=5000, lrate=0.0, seed=0)
+    evaluate_accuracy(net, env, pc, n_trials=500, lrate=0.0, seed=0)
 
     print('\n=== learning ON (same network, weights continue updating) ===')
-    evaluate_accuracy(net, env, pc, n_trials=5000, lrate=0.02, seed=0)
+    evaluate_accuracy(net, env, pc, n_trials=500, lrate=0.02, seed=0)
